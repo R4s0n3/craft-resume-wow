@@ -95,6 +95,18 @@ make package    # reproducible installable ZIP in dist/
 
 Implementation: `Model.lua` owns totals and retention; `Tracker.lua` adapts Retail events; `Core.lua` owns sessions and persistence; `UI.lua` provides native WoW frames; `Export.lua` creates CSV reports.
 
+### Publishing releases
+
+GitHub Actions packages and publishes version tags to GitHub and CurseForge.
+Configure the repository variable `CURSEFORGE_PROJECT_ID` and secret
+`CF_API_TOKEN` before creating a release tag. The token is available from the
+[CurseForge API Tokens page](https://authors.curseforge.com/#/settings/api-tokens).
+
+For each release, update `## Version` in `CraftResume/CraftResume.toc`, commit
+the change, and push a matching tag such as `v0.6.0`. The workflow verifies that
+the tag and TOC versions match, creates the installable ZIP and GitHub release,
+and uploads the same release to CurseForge.
+
 The integration was checked against Blizzard's generated API definitions and UI source, as mirrored by Gethe:
 
 - [TradeSkillUI events and functions](https://github.com/Gethe/wow-ui-source/blob/live/Interface/AddOns/Blizzard_APIDocumentationGenerated/TradeSkillUIDocumentation.lua)

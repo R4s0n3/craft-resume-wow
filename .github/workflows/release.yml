@@ -1,0 +1,120 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify release tag and addon version
+        shell: bash
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          toc_version="$(sed -n 's/^## Version: //p' CraftResume/CraftResume.toc)"
+          if [[ "$tag_version" != "$toc_version" ]]; then
+            echo "Tag version $tag_version does not match TOC version $toc_version" >&2
+            exit 1
+          fi
+
+      - name: Build installable ZIP
+        run: python3 scripts/package.py
+
+      - name: Verify archive layout
+        shell: bash
+        run: |
+          zip_path="dist/CraftResume-${GITHUB_REF_NAME#v}.zip"
+          test -f "$zip_path"
+          unzip -Z1 "$zip_path" | grep -qx 'CraftResume/CraftResume.toc'
+          if unzip -Z1 "$zip_path" | grep -qv '^CraftResume/'; then
+            echo "Archive contains files outside the CraftResume folder" >&2
+            exit 1
+          fi
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" \
+              "dist/CraftResume-${version}.zip" \
+              --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              "dist/CraftResume-${version}.zip" \
+              --generate-notes \
+              --title "Craft Resume ${version}"
+          fi
+
+      - name: Upload release to CurseForge
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_PROJECT_ID: ${{ vars.CURSEFORGE_PROJECT_ID }}
+        shell: bash
+        run: |
+          if [[ -z "$CF_API_TOKEN" || -z "$CF_PROJECT_ID" ]]; then
+            echo "Configure CF_API_TOKEN and CURSEFORGE_PROJECT_ID first" >&2
+            exit 1
+          fi
+
+          version="${GITHUB_REF_NAME#v}"
+          interface="$(sed -n 's/^## Interface: //p' CraftResume/CraftResume.toc)"
+          major="${interface:0:${#interface}-4}"
+          minor="$((10#${interface: -4:2}))"
+          patch="$((10#${interface: -2:2}))"
+          game_version="${major}.${minor}.${patch}"
+
+          curl --fail --silent --show-error \
+            -H "x-api-token: $CF_API_TOKEN" \
+            'https://wow.curseforge.com/api/game/wow/versions' \
+            > curseforge-versions.json
+
+          game_version_id="$(jq -r \
+            --arg version "$game_version" \
+            'map(select(.gameVersionTypeID == 517 and .name == $version))[0].id // empty' \
+            curseforge-versions.json)"
+          if [[ -z "$game_version_id" ]]; then
+            echo "CurseForge does not list Retail version $game_version" >&2
+            exit 1
+          fi
+
+          previous_tag="$(git describe --tags --abbrev=0 "$GITHUB_REF_NAME^" 2>/dev/null || true)"
+          if [[ -n "$previous_tag" ]]; then
+            git log --pretty='- %s' "$previous_tag..$GITHUB_REF_NAME" > changelog.md
+          else
+            git log --pretty='- %s' "$GITHUB_REF_NAME" > changelog.md
+          fi
+
+          jq -n \
+            --arg display_name "Craft Resume ${version}" \
+            --argjson game_version_id "$game_version_id" \
+            --rawfile changelog changelog.md \
+            '{
+              displayName: $display_name,
+              gameVersions: [$game_version_id],
+              releaseType: "release",
+              changelog: $changelog,
+              changelogType: "markdown"
+            }' > curseforge-metadata.json
+
+          curl --fail-with-body --silent --show-error \
+            -H "x-api-token: $CF_API_TOKEN" \
+            -F 'metadata=<curseforge-metadata.json' \
+            -F "file=@dist/CraftResume-${version}.zip" \
+            "https://wow.curseforge.com/api/projects/${CF_PROJECT_ID}/upload-file"
