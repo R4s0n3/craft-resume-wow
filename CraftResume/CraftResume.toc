@@ -1,0 +1,13 @@
+## Interface: 120100
+## Title: Craft Resume
+## Notes: Crafting sessions, actual yields, reagent returns, and saved history.
+## Author: R4s0n3
+## Version: 0.5.0
+## SavedVariables: CraftResumeDB, TradeResumeDB
+## Category-enUS: Professions
+
+Model.lua
+Core.lua
+Tracker.lua
+Export.lua
+UI.lua
